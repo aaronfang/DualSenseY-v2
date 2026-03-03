@@ -63,10 +63,16 @@ add_subdirectory(thirdparty/asio-cmake)
 add_subdirectory(thirdparty/stb_image)
 add_subdirectory(thirdparty/nativefiledialog)
 add_subdirectory(thirdparty/PlatformFolders)
-add_subdirectory(thirdparty/Updater)
+# Updater requires OpenSSL; main app needs tiny-process-library from Updater
+find_package(OpenSSL QUIET)
+if(OpenSSL_FOUND)
+  add_subdirectory(thirdparty/Updater)
+  add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:Updater> $<TARGET_FILE_DIR:${PROJECT_NAME}>)
+else()
+  add_subdirectory(thirdparty/Updater/thirdparty/tiny-process-library)
+endif()
+
 add_subdirectory(thirdparty/traypp)
 
 # Linking libraries
 target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad imgui duaLib nlohmann_json miniaudio ViGEmClient asio stb_image nativefiledialog sago::platform_folders tiny-process-library tray)
-
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:Updater> $<TARGET_FILE_DIR:${PROJECT_NAME}>)

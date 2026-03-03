@@ -1,4 +1,4 @@
-﻿#include "mainWindow.hpp"
+#include "mainWindow.hpp"
 
 #include <imgui.h>
 #include <string>
@@ -1573,6 +1573,35 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 		const ImU32 redColor = IM_COL32(255, 0, 0, 255);
 		const ImU32 greenColor = IM_COL32(0, 255, 0, 255);
 
+		// Apply deadzone, curve and output scale to a copy for preview (must match controllerEmulation logic)
+		s_ScePadData displayState = state;
+		auto applyDeadzoneAndCurve = [](int deadzone, float curveExponent, float curveStrength, float outputScale, s_SceStickData& stick) {
+			if (deadzone >= 127) {
+				stick.X = 128; stick.Y = 128;
+				return;
+			}
+			float centerX = static_cast<float>(stick.X - 128);
+			float centerY = static_cast<float>(stick.Y - 128);
+			float magnitude = std::sqrt(centerX * centerX + centerY * centerY);
+			if (deadzone > 0 && magnitude <= deadzone) {
+				stick.X = 128; stick.Y = 128;
+			} else {
+				float scale = (deadzone <= 0) ? (magnitude / 127.0f) : (magnitude - deadzone) / (127.0f - deadzone);
+				if (scale > 1.0f) scale = 1.0f;
+				if (curveStrength > 0.0f && scale > 0.0f) {
+					float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+					scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				}
+				scale = std::min(1.0f, scale * outputScale);
+				stick.X = 128 + static_cast<int>(centerX * scale);
+				stick.Y = 128 + static_cast<int>(centerY * scale);
+			}
+		};
+		applyDeadzoneAndCurve(scePadSettings.leftStickDeadzone, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale, displayState.LeftStick);
+		applyDeadzoneAndCurve(scePadSettings.rightStickDeadzone, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale, displayState.RightStick);
+		if (scePadSettings.rightStickSwapAxes)
+			std::swap(displayState.RightStick.X, displayState.RightStick.Y);
+
 		auto drawStick = [](const s_SceStickData &stick, bool isPressed, int deadzone, ImVec2 centerPos, ImU32 borderColor)
 		{
 			const float radius = static_cast<float>(previewSize);
@@ -1592,22 +1621,89 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 			ImGui::GetWindowDrawList()->AddText(ImVec2(stickPos.x - 19, stickPos.y - 40), borderColor, std::to_string(stick.Y).c_str());
 		};
 
-		ImVec2 leftCenter = ImGui::GetCursorScreenPos();
-		leftCenter.x += previewSize;
-		leftCenter.y += previewSize;
+		// Layout: [Left circle] [Right circle] [Curve box] - curve matches circle size (diameter = previewSize*2)
+		const float curvePreviewSize = static_cast<float>(previewSize * 2);
+		const float gap = 10.0f;
+		ImVec2 rowStart = ImGui::GetCursorScreenPos();
+		ImVec2 leftCenter = ImVec2(rowStart.x + previewSize, rowStart.y + previewSize);
+		ImVec2 rightCenter = ImVec2(leftCenter.x + previewSize * 2 + gap, leftCenter.y);
+		ImVec2 curveMin = ImVec2(rightCenter.x + previewSize + gap, rowStart.y);
+		ImVec2 curveMax = ImVec2(curveMin.x + curvePreviewSize, curveMin.y + curvePreviewSize);
 
-		drawStick(state.LeftStick, state.bitmask_buttons & SCE_BM_L3 ? true : false, scePadSettings.leftStickDeadzone, leftCenter, m_IsLightMode ? blackColor : whiteColor);
+		drawStick(displayState.LeftStick, state.bitmask_buttons & SCE_BM_L3 ? true : false, scePadSettings.leftStickDeadzone, leftCenter, m_IsLightMode ? blackColor : whiteColor);
+		drawStick(displayState.RightStick, state.bitmask_buttons & SCE_BM_R3 ? true : false, scePadSettings.rightStickDeadzone, rightCenter, m_IsLightMode ? blackColor : whiteColor);
 
-		ImVec2 rightCenter = leftCenter;
-		rightCenter.x += previewSize * 2.1f;
+		// Curve preview: input (0-1) vs output (0-1), gray=linear, green=left, blue=right (includes output scale)
+		const int curveSamples = 64;
+		auto evalCurve = [](float x, float exponent, float strength, float outputScale) -> float {
+			if (x <= 0.0f) return 0.0f;
+			float curved = (exponent != 1.0f) ? std::pow(x, exponent) : x;
+			float y = (1.0f - strength) * x + strength * curved;
+			return std::min(1.0f, y * outputScale);
+		};
+		ImDrawList* dl = ImGui::GetWindowDrawList();
+		const ImU32 grayColor = IM_COL32(128, 128, 128, 255);
+		const ImU32 leftCurveColor = IM_COL32(0, 255, 0, 255);
+		const ImU32 rightCurveColor = IM_COL32(100, 150, 255, 255);
+		dl->AddRect(curveMin, curveMax, IM_COL32(255, 0, 0, 255), 0.0f, 0, 1.5f);
+		for (int i = 0; i < curveSamples; ++i) {
+			float x0 = static_cast<float>(i) / curveSamples;
+			float x1 = static_cast<float>(i + 1) / curveSamples;
+			float y0 = x0, y1 = x1;
+			float ly0 = evalCurve(x0, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale);
+			float ly1 = evalCurve(x1, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale);
+			float ry0 = evalCurve(x0, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale);
+			float ry1 = evalCurve(x1, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale);
+			ImVec2 p0(curveMin.x + x0 * curvePreviewSize, curveMax.y - y0 * curvePreviewSize);
+			ImVec2 p1(curveMin.x + x1 * curvePreviewSize, curveMax.y - y1 * curvePreviewSize);
+			ImVec2 lp0(curveMin.x + x0 * curvePreviewSize, curveMax.y - ly0 * curvePreviewSize);
+			ImVec2 lp1(curveMin.x + x1 * curvePreviewSize, curveMax.y - ly1 * curvePreviewSize);
+			ImVec2 rp0(curveMin.x + x0 * curvePreviewSize, curveMax.y - ry0 * curvePreviewSize);
+			ImVec2 rp1(curveMin.x + x1 * curvePreviewSize, curveMax.y - ry1 * curvePreviewSize);
+			dl->AddLine(p0, p1, grayColor, 1.0f);
+			dl->AddLine(lp0, lp1, leftCurveColor, 2.0f);
+			dl->AddLine(rp0, rp1, rightCurveColor, 2.0f);
+		}
 
-		drawStick(state.RightStick, state.bitmask_buttons & SCE_BM_R3 ? true : false, scePadSettings.rightStickDeadzone, rightCenter, m_IsLightMode ? blackColor : whiteColor);
+		ImGui::Dummy(ImVec2(curveMax.x - rowStart.x + gap, curvePreviewSize));
+		ImGui::SameLine();
+		ImGui::BeginGroup();
+		ImGui::TextUnformatted("Linear");
+		ImGui::TextColored(ImVec4(0, 1, 0, 1), "Left");
+		ImGui::TextColored(ImVec4(0.4f, 0.6f, 1, 1), "Right");
+		ImGui::EndGroup();
 
-		ImGui::Dummy(ImVec2(1, previewSize * 2));
 		ImGui::SetNextItemWidth(400);
 		ImGui::SliderInt(cstr("LeftAnalogStickDeadZone"), &scePadSettings.leftStickDeadzone, 0, 127);
 		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("LeftStickCurveExponent"), &scePadSettings.leftStickCurveExponent, 0.2f, 8.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickCurveExponentTooltip"));
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("LeftStickCurveStrength"), &scePadSettings.leftStickCurveStrength, 0.0f, 1.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickCurveStrengthTooltip"));
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("LeftStickOutputScale"), &scePadSettings.leftStickOutputScale, 0.1f, 1.5f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickOutputScaleTooltip"));
+		ImGui::SetNextItemWidth(400);
 		ImGui::SliderInt(cstr("RightAnalogStickDeadZone"), &scePadSettings.rightStickDeadzone, 0, 127);
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("RightStickCurveExponent"), &scePadSettings.rightStickCurveExponent, 0.2f, 8.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickCurveExponentTooltip"));
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("RightStickCurveStrength"), &scePadSettings.rightStickCurveStrength, 0.0f, 1.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickCurveStrengthTooltip"));
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("RightStickOutputScale"), &scePadSettings.rightStickOutputScale, 0.1f, 1.5f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickOutputScaleTooltip"));
+		ImGui::Checkbox(cstr("RightStickSwapAxes"), &scePadSettings.rightStickSwapAxes);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("RightStickSwapAxesTooltip"));
 		ImGui::TreePop();
 	}
 

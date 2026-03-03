@@ -3,6 +3,7 @@
 #include "scePadSettings.hpp"
 #include "controllerHotkey.hpp"
 #include <cmath>
+#include <utility>
 
 int convertRange(int value, int oldMin, int oldMax, int newMin, int newMax) {
 	if (oldMin == oldMax) {
@@ -225,23 +226,50 @@ void Vigem::applyInputSettingsToScePadState(s_scePadSettings& settings, s_ScePad
 	state.R2_Analog = state.R2_Analog >= settings.rightTriggerThreshold ? state.R2_Analog : 0;
 #pragma endregion
 
-#pragma region Analog deadzone
-	auto applyDeadzone = [&](int deadzone, s_SceStickData& stick) {
-		if (deadzone <= 0)
+#pragma region Analog deadzone and curve mapping (radial scaling; curve starts from deadzone boundary)
+	auto applyDeadzoneAndCurve = [&](int deadzone, float curveExponent, float curveStrength, float outputScale, s_SceStickData& stick) {
+		if (deadzone >= 127) {
+			stick.X = 128;
+			stick.Y = 128;
 			return;
+		}
 
-		float centerX = (stick.X - 128);
-		float centerY = (stick.Y - 128);
+		float centerX = static_cast<float>(stick.X - 128);
+		float centerY = static_cast<float>(stick.Y - 128);
 		float magnitude = sqrt(centerX * centerX + centerY * centerY);
 
-		float deadzoneNorm = deadzone / 128;
+		if (deadzone > 0 && magnitude <= deadzone) {
+			stick.X = 128;
+			stick.Y = 128;
+		} else {
+			// Normalize: 0 at deadzone boundary, 1 at max (127)
+			float scale = (deadzone <= 0) ? (magnitude / 127.0f) : (magnitude - deadzone) / (127.0f - deadzone);
+			if (scale > 1.0f) scale = 1.0f;
 
-		stick.X = magnitude > deadzone ? stick.X : 128;
-		stick.Y = magnitude > deadzone ? stick.Y : 128;
-		};
-	applyDeadzone(settings.leftStickDeadzone, state.LeftStick);
-	applyDeadzone(settings.rightStickDeadzone, state.RightStick);
+			// Two-parameter curve: blend between linear and power curve for fine sensitivity control
+			// curveStrength: 0=linear, 1=full power curve. exponent: >1=reduce sensitivity, <1=increase
+			if (curveStrength > 0.0f && scale > 0.0f) {
+				float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+				scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+			}
 
+			// Output scale: multiply overall output, clamp to [0,1]
+			// Use (std::min) to avoid Windows min macro conflict
+			scale = (std::min)(1.0f, scale * outputScale);
+
+			stick.X = 128 + static_cast<int>(centerX * scale);
+			stick.Y = 128 + static_cast<int>(centerY * scale);
+		}
+	};
+	applyDeadzoneAndCurve(settings.leftStickDeadzone, settings.leftStickCurveExponent, settings.leftStickCurveStrength, settings.leftStickOutputScale, state.LeftStick);
+	applyDeadzoneAndCurve(settings.rightStickDeadzone, settings.rightStickCurveExponent, settings.rightStickCurveStrength, settings.rightStickOutputScale, state.RightStick);
+
+#pragma endregion
+
+#pragma region Right stick swap axes (X <-> Y)
+	if (settings.rightStickSwapAxes) {
+		std::swap(state.RightStick.X, state.RightStick.Y);
+	}
 #pragma endregion
 
 #pragma region Gyro to right stick
@@ -263,7 +291,7 @@ void Vigem::applyInputSettingsToScePadState(s_scePadSettings& settings, s_ScePad
 			state.RightStick.X = static_cast<int>((-adjustedY + 1.0f) * 127.5f);
 			state.RightStick.Y = static_cast<int>((-adjustedX + 1.0f) * 127.5f);
 
-			applyDeadzone(settings.gyroToRightStickDeadzone, state.RightStick);
+			applyDeadzoneAndCurve(settings.gyroToRightStickDeadzone, 1.0f, 1.0f, 1.0f, state.RightStick);
 		}
 	}
 #pragma endregion
@@ -326,6 +354,19 @@ void Vigem::EmulatedControllerUpdate() {
 				uint32_t result = scePadReadState(g_ScePad[i], &scePadState);
 
 				s_scePadSettings settingsToUse = (m_SelectedController == i && m_Udp.IsActive()) ? m_Udp.GetSettings() : m_ScePadSettings[i];
+				// When UDP is active (e.g. Adaptive_Trigger for RBR/AC), UDP settings only contain trigger/LED.
+				// Preserve stick mapping from main config so rightStickSwapAxes, curve, deadzone etc. are not lost.
+				if (m_SelectedController == i && m_Udp.IsActive()) {
+					settingsToUse.leftStickDeadzone = m_ScePadSettings[i].leftStickDeadzone;
+					settingsToUse.rightStickDeadzone = m_ScePadSettings[i].rightStickDeadzone;
+					settingsToUse.leftStickCurveExponent = m_ScePadSettings[i].leftStickCurveExponent;
+					settingsToUse.rightStickCurveExponent = m_ScePadSettings[i].rightStickCurveExponent;
+					settingsToUse.leftStickCurveStrength = m_ScePadSettings[i].leftStickCurveStrength;
+					settingsToUse.rightStickCurveStrength = m_ScePadSettings[i].rightStickCurveStrength;
+					settingsToUse.leftStickOutputScale = m_ScePadSettings[i].leftStickOutputScale;
+					settingsToUse.rightStickOutputScale = m_ScePadSettings[i].rightStickOutputScale;
+					settingsToUse.rightStickSwapAxes = m_ScePadSettings[i].rightStickSwapAxes;
+				}
 				applyInputSettingsToScePadState(settingsToUse, scePadState);
 
 				if (result == SCE_OK) {

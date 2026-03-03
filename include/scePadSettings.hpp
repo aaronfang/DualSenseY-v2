@@ -163,6 +163,13 @@ struct s_scePadSettings {
 	// Analog sticks
 	int leftStickDeadzone = 0;
 	int rightStickDeadzone = 0;
+	float leftStickCurveExponent = 1.0f;   // Power curve: 1.0=linear, >1=reduce sensitivity, <1=increase sensitivity
+	float rightStickCurveExponent = 1.0f;   // Applied after deadzone; curve starts from deadzone boundary
+	float leftStickCurveStrength = 1.0f;    // Blend: 0=linear, 1=full power curve. Fine-tunes curve effect.
+	float rightStickCurveStrength = 1.0f;
+	float leftStickOutputScale = 1.0f;      // Scale overall output. 1.0=no change, <1=reduce, >1=boost (clamped).
+	float rightStickOutputScale = 1.0f;
+	bool rightStickSwapAxes = false;  // Swap right stick X/Y (left-right <-> up-down) for games like AC Rally handbrake
 
 	// Touchpad
 	bool touchpadAsMouse = false;
@@ -188,6 +195,13 @@ struct s_ScePadSettingsSimple {
 	// Analog sticks
 	int leftStickDeadzone = 0;
 	int rightStickDeadzone = 0;
+	float leftStickCurveExponent = 1.0f;
+	float rightStickCurveExponent = 1.0f;
+	float leftStickCurveStrength = 1.0f;
+	float rightStickCurveStrength = 1.0f;
+	float leftStickOutputScale = 1.0f;
+	float rightStickOutputScale = 1.0f;
+	bool rightStickSwapAxes = false;
 
 	// Motion
 	bool gyroToRightStick = false;
@@ -245,6 +259,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	emulateAnalogWsad,
 	leftStickDeadzone,
 	rightStickDeadzone,
+	leftStickCurveExponent,
+	rightStickCurveExponent,
+	leftStickCurveStrength,
+	rightStickCurveStrength,
+	leftStickOutputScale,
+	rightStickOutputScale,
+	rightStickSwapAxes,
 	touchpadAsMouse,
 	touchpadAsMouse_sensitivity,
 	useMouse1Hotkey,
