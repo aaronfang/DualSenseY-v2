@@ -227,6 +227,10 @@ void Vigem::applyInputSettingsToScePadState(s_scePadSettings& settings, s_ScePad
 #pragma endregion
 
 #pragma region Analog deadzone and curve mapping (radial scaling; curve starts from deadzone boundary)
+	// Two calculation modes:
+	// 1. Legacy mode (v2-38): applies scale directly to original delta values, but with curve support
+	// 2. Advanced mode (current): normalizes magnitude first, applies curve, then scales
+	
 	auto applyDeadzoneAndCurve = [&](int deadzone, float curveExponent, float curveStrength, float outputScale, s_SceStickData& stick) {
 		if (deadzone >= 127) {
 			stick.X = 128;
@@ -234,31 +238,58 @@ void Vigem::applyInputSettingsToScePadState(s_scePadSettings& settings, s_ScePad
 			return;
 		}
 
-		float centerX = static_cast<float>(stick.X - 128);
-		float centerY = static_cast<float>(stick.Y - 128);
-		float magnitude = sqrt(centerX * centerX + centerY * centerY);
+		int deltaX = stick.X - 128;
+		int deltaY = stick.Y - 128;
+		float magnitude = sqrt(static_cast<float>(deltaX * deltaX + deltaY * deltaY));
 
 		if (deadzone > 0 && magnitude <= deadzone) {
 			stick.X = 128;
 			stick.Y = 128;
 		} else {
-			// Normalize: 0 at deadzone boundary, 1 at max (127)
-			float scale = (deadzone <= 0) ? (magnitude / 127.0f) : (magnitude - deadzone) / (127.0f - deadzone);
+			// Calculate base scale (after deadzone removal)
+			float scale = (magnitude - deadzone) / (127.0f - deadzone);
 			if (scale > 1.0f) scale = 1.0f;
+			
+			if (settings.useLegacyStickCalculation) {
+				// Legacy v2-38 style: apply scale directly to original deltas (preserves v2-38 behavior)
+				// Curve support: applies when curveStrength > 0 or curveExponent != 1.0
+				// Output scale support: applies when outputScale != 1.0
+				// With default params (exponent=1.0, strength=1.0, outputScale=1.0), this is identical to v2-38
+				if ((curveStrength > 0.0f || curveExponent != 1.0f) && scale > 0.0f) {
+					float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+					scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				}
+				
+				// Apply output scale (clamp to max 1.0 to prevent overflow)
+				if (outputScale != 1.0f) {
+					scale = (std::min)(1.0f, scale * outputScale);
+				}
+				
+				// Original v2-38 calculation: directly scale deltaX/deltaY
+				stick.X = 128 + static_cast<int>(deltaX * scale);
+				stick.Y = 128 + static_cast<int>(deltaY * scale);
+			} else {
+				// Advanced calculation: normalize first, then apply curve and output scale
+				float centerX = static_cast<float>(deltaX);
+				float centerY = static_cast<float>(deltaY);
+				
+				// Normalize: 0 at deadzone boundary, 1 at max (127)
+				scale = (deadzone <= 0) ? (magnitude / 127.0f) : scale;
 
-			// Two-parameter curve: blend between linear and power curve for fine sensitivity control
-			// curveStrength: 0=linear, 1=full power curve. exponent: >1=reduce sensitivity, <1=increase
-			if (curveStrength > 0.0f && scale > 0.0f) {
-				float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
-				scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				// Two-parameter curve: blend between linear and power curve for fine sensitivity control
+				// curveStrength: 0=linear, 1=full power curve. exponent: >1=reduce sensitivity, <1=increase
+				if (curveStrength > 0.0f && scale > 0.0f) {
+					float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+					scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				}
+
+				// Output scale: multiply overall output, clamp to [0,1]
+				// Use (std::min) to avoid Windows min macro conflict
+				scale = (std::min)(1.0f, scale * outputScale);
+
+				stick.X = 128 + static_cast<int>(centerX * scale);
+				stick.Y = 128 + static_cast<int>(centerY * scale);
 			}
-
-			// Output scale: multiply overall output, clamp to [0,1]
-			// Use (std::min) to avoid Windows min macro conflict
-			scale = (std::min)(1.0f, scale * outputScale);
-
-			stick.X = 128 + static_cast<int>(centerX * scale);
-			stick.Y = 128 + static_cast<int>(centerY * scale);
 		}
 	};
 	applyDeadzoneAndCurve(settings.leftStickDeadzone, settings.leftStickCurveExponent, settings.leftStickCurveStrength, settings.leftStickOutputScale, state.LeftStick);
@@ -366,6 +397,7 @@ void Vigem::EmulatedControllerUpdate() {
 					settingsToUse.leftStickOutputScale = m_ScePadSettings[i].leftStickOutputScale;
 					settingsToUse.rightStickOutputScale = m_ScePadSettings[i].rightStickOutputScale;
 					settingsToUse.rightStickSwapAxes = m_ScePadSettings[i].rightStickSwapAxes;
+					settingsToUse.useLegacyStickCalculation = m_ScePadSettings[i].useLegacyStickCalculation;
 				}
 				applyInputSettingsToScePadState(settingsToUse, scePadState);
 

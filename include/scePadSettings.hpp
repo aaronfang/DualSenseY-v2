@@ -170,6 +170,7 @@ struct s_scePadSettings {
 	float leftStickOutputScale = 1.0f;      // Scale overall output. 1.0=no change, <1=reduce, >1=boost (clamped).
 	float rightStickOutputScale = 1.0f;
 	bool rightStickSwapAxes = false;  // Swap right stick X/Y (left-right <-> up-down) for games like AC Rally handbrake
+	bool useLegacyStickCalculation = false;  // Use v2-38 legacy stick calculation (simple linear scaling without curve/output scale)
 
 	// Touchpad
 	bool touchpadAsMouse = false;
@@ -202,6 +203,7 @@ struct s_ScePadSettingsSimple {
 	float leftStickOutputScale = 1.0f;
 	float rightStickOutputScale = 1.0f;
 	bool rightStickSwapAxes = false;
+	bool useLegacyStickCalculation = false;
 
 	// Motion
 	bool gyroToRightStick = false;
@@ -266,6 +268,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	leftStickOutputScale,
 	rightStickOutputScale,
 	rightStickSwapAxes,
+	useLegacyStickCalculation,
 	touchpadAsMouse,
 	touchpadAsMouse_sensitivity,
 	useMouse1Hotkey,

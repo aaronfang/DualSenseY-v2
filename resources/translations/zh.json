@@ -167,5 +167,7 @@
   "ShareButton": "分享按钮",
   "ShareButtonAsSelect": "分享按钮作为选择键",
   "TouchpadAsSelect": "触摸板作为选择键",
-  "TouchpadAsStart": "触摸板作为开始键"
+  "TouchpadAsStart": "触摸板作为开始键",
+  "UseLegacyStickCalculation": "使用旧版摇杆计算方式 (v2-38)",
+  "UseLegacyStickCalculationTooltip": "启用以使用 v2-38 摇杆计算风格（直接对 delta 值应用缩放）。禁用以使用高级模式（先归一化 magnitude）。两种模式都支持曲线和输出缩放，但行为略有不同。"
 }

@@ -1575,26 +1575,49 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 
 		// Apply deadzone, curve and output scale to a copy for preview (must match controllerEmulation logic)
 		s_ScePadData displayState = state;
-		auto applyDeadzoneAndCurve = [](int deadzone, float curveExponent, float curveStrength, float outputScale, s_SceStickData& stick) {
+		auto applyDeadzoneAndCurve = [&scePadSettings](int deadzone, float curveExponent, float curveStrength, float outputScale, s_SceStickData& stick) {
 			if (deadzone >= 127) {
 				stick.X = 128; stick.Y = 128;
 				return;
 			}
-			float centerX = static_cast<float>(stick.X - 128);
-			float centerY = static_cast<float>(stick.Y - 128);
-			float magnitude = std::sqrt(centerX * centerX + centerY * centerY);
+			int deltaX = stick.X - 128;
+			int deltaY = stick.Y - 128;
+			float magnitude = std::sqrt(static_cast<float>(deltaX * deltaX + deltaY * deltaY));
 			if (deadzone > 0 && magnitude <= deadzone) {
 				stick.X = 128; stick.Y = 128;
 			} else {
-				float scale = (deadzone <= 0) ? (magnitude / 127.0f) : (magnitude - deadzone) / (127.0f - deadzone);
+				// Calculate base scale (after deadzone removal)
+				float scale = (magnitude - deadzone) / (127.0f - deadzone);
 				if (scale > 1.0f) scale = 1.0f;
-				if (curveStrength > 0.0f && scale > 0.0f) {
-					float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
-					scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				
+				if (scePadSettings.useLegacyStickCalculation) {
+					// Legacy v2-38 style: apply scale directly to original deltas
+					// Curve and output scale support
+					if ((curveStrength > 0.0f || curveExponent != 1.0f) && scale > 0.0f) {
+						float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+						scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+					}
+					
+					// Apply output scale
+					if (outputScale != 1.0f) {
+						scale = std::min(1.0f, scale * outputScale);
+					}
+					
+					stick.X = 128 + static_cast<int>(deltaX * scale);
+					stick.Y = 128 + static_cast<int>(deltaY * scale);
+				} else {
+					// Advanced calculation: normalize first, then apply curve and output scale
+					float centerX = static_cast<float>(deltaX);
+					float centerY = static_cast<float>(deltaY);
+					scale = (deadzone <= 0) ? (magnitude / 127.0f) : scale;
+					if (curveStrength > 0.0f && scale > 0.0f) {
+						float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+						scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+					}
+					scale = std::min(1.0f, scale * outputScale);
+					stick.X = 128 + static_cast<int>(centerX * scale);
+					stick.Y = 128 + static_cast<int>(centerY * scale);
 				}
-				scale = std::min(1.0f, scale * outputScale);
-				stick.X = 128 + static_cast<int>(centerX * scale);
-				stick.Y = 128 + static_cast<int>(centerY * scale);
 			}
 		};
 		applyDeadzoneAndCurve(scePadSettings.leftStickDeadzone, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale, displayState.LeftStick);
@@ -1672,6 +1695,10 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 		ImGui::TextColored(ImVec4(0, 1, 0, 1), "Left");
 		ImGui::TextColored(ImVec4(0.4f, 0.6f, 1, 1), "Right");
 		ImGui::EndGroup();
+
+		ImGui::Checkbox(cstr("UseLegacyStickCalculation"), &scePadSettings.useLegacyStickCalculation);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("UseLegacyStickCalculationTooltip"));
 
 		ImGui::SetNextItemWidth(400);
 		ImGui::SliderInt(cstr("LeftAnalogStickDeadZone"), &scePadSettings.leftStickDeadzone, 0, 127);

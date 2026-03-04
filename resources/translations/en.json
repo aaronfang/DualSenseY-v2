@@ -170,5 +170,7 @@
   "TouchpadAsStart": "Touchpad as start",
   "CaptureDevice": "Capture device",
   "UseHotkey": "Use hotkey",
-  "GyroToMouseHotkey": "Gyro to mouse hotkey"
+  "GyroToMouseHotkey": "Gyro to mouse hotkey",
+  "UseLegacyStickCalculation": "Use legacy stick calculation (v2-38)",
+  "UseLegacyStickCalculationTooltip": "Enable to use v2-38 stick calculation style (applies scale directly to delta values). Disable for advanced mode (normalizes magnitude first). Both modes support curve and output scale, but behave slightly differently."
 }
