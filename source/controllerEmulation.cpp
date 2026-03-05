@@ -231,7 +231,8 @@ void Vigem::applyInputSettingsToScePadState(s_scePadSettings& settings, s_ScePad
 	// 1. Legacy mode (v2-38): applies scale directly to original delta values, but with curve support
 	// 2. Advanced mode (current): normalizes magnitude first, applies curve, then scales
 	
-	auto applyDeadzoneAndCurve = [&](int deadzone, float curveExponent, float curveStrength, float outputScale, s_SceStickData& stick) {
+	auto applyDeadzoneAndCurve = [&](int deadzone, float curveExponent, float curveStrength, float outputScale, 
+									  int centerDampeningRange, float centerDampeningStrength, s_SceStickData& stick) {
 		if (deadzone >= 127) {
 			stick.X = 128;
 			stick.Y = 128;
@@ -242,58 +243,96 @@ void Vigem::applyInputSettingsToScePadState(s_scePadSettings& settings, s_ScePad
 		int deltaY = stick.Y - 128;
 		float magnitude = sqrt(static_cast<float>(deltaX * deltaX + deltaY * deltaY));
 
-		if (deadzone > 0 && magnitude <= deadzone) {
+		if (magnitude <= deadzone) {
 			stick.X = 128;
 			stick.Y = 128;
 		} else {
-			// Calculate base scale (after deadzone removal)
-			float scale = (magnitude - deadzone) / (127.0f - deadzone);
-			if (scale > 1.0f) scale = 1.0f;
+			float centerX = static_cast<float>(deltaX);
+			float centerY = static_cast<float>(deltaY);
 			
-			if (settings.useLegacyStickCalculation) {
-				// Legacy v2-38 style: apply scale directly to original deltas (preserves v2-38 behavior)
-				// Curve support: applies when curveStrength > 0 or curveExponent != 1.0
-				// Output scale support: applies when outputScale != 1.0
-				// With default params (exponent=1.0, strength=1.0, outputScale=1.0), this is identical to v2-38
-				if ((curveStrength > 0.0f || curveExponent != 1.0f) && scale > 0.0f) {
-					float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
-					scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+			// Calculate base scale (after deadzone removal)
+			// Normalize: 0 at deadzone boundary, 1 at max (127)
+			float scale = (deadzone <= 0) ? (magnitude / 127.0f) : ((magnitude - deadzone) / (127.0f - deadzone));
+			if (scale > 1.0f) scale = 1.0f;
+
+			// Independent axis center dampening: X and Y axes are dampened independently
+			// This ensures that small movements on one axis are dampened even if the other axis is at max
+			// Example: pulling Y to max and wiggling X left/right will still dampen the X movements
+			float scaleX = scale;
+			float scaleY = scale;
+			
+			if (centerDampeningRange > 0 && centerDampeningStrength > 0.0f) {
+				float absX = std::abs(static_cast<float>(deltaX));
+				float absY = std::abs(static_cast<float>(deltaY));
+				
+				// Smootherstep function for smooth transitions: 6t^5 - 15t^4 + 10t^3
+				// Provides C2 continuity (smooth first and second derivatives at boundaries)
+				auto smootherstep = [](float t) -> float {
+					if (t <= 0.0f) return 0.0f;
+					if (t >= 1.0f) return 1.0f;
+					return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+				};
+				
+				// Apply dampening independently to X axis
+				float postDeadzoneX = (std::max)(0.0f, absX - deadzone);
+				if (postDeadzoneX < centerDampeningRange) {
+					float dampenFactorX = postDeadzoneX / static_cast<float>(centerDampeningRange);
+					// Apply smootherstep for smooth transition at dampening range boundary
+					float smoothFactorX = smootherstep(dampenFactorX);
+					
+					// strength 0-1: smooth interpolation from full dampening to no dampening
+					// strength 1-2: applies power curve for steeper dampening without going negative
+					if (centerDampeningStrength <= 1.0f) {
+						scaleX = scale * (smoothFactorX + (1.0f - smoothFactorX) * (1.0f - centerDampeningStrength));
+					} else {
+						// For strength > 1, use power curve on the smooth factor
+						float exponent = 1.0f + (centerDampeningStrength - 1.0f) * 4.0f; // Maps [1,2] to [1,5]
+						scaleX = scale * std::pow(smoothFactorX, exponent);
+					}
 				}
 				
-				// Apply output scale (clamp to max 1.0 to prevent overflow)
-				if (outputScale != 1.0f) {
-					scale = (std::min)(1.0f, scale * outputScale);
+				// Apply dampening independently to Y axis
+				float postDeadzoneY = (std::max)(0.0f, absY - deadzone);
+				if (postDeadzoneY < centerDampeningRange) {
+					float dampenFactorY = postDeadzoneY / static_cast<float>(centerDampeningRange);
+					float smoothFactorY = smootherstep(dampenFactorY);
+					
+					if (centerDampeningStrength <= 1.0f) {
+						scaleY = scale * (smoothFactorY + (1.0f - smoothFactorY) * (1.0f - centerDampeningStrength));
+					} else {
+						float exponent = 1.0f + (centerDampeningStrength - 1.0f) * 4.0f;
+						scaleY = scale * std::pow(smoothFactorY, exponent);
+					}
 				}
 				
-				// Original v2-38 calculation: directly scale deltaX/deltaY
-				stick.X = 128 + static_cast<int>(deltaX * scale);
-				stick.Y = 128 + static_cast<int>(deltaY * scale);
-			} else {
-				// Advanced calculation: normalize first, then apply curve and output scale
-				float centerX = static_cast<float>(deltaX);
-				float centerY = static_cast<float>(deltaY);
-				
-				// Normalize: 0 at deadzone boundary, 1 at max (127)
-				scale = (deadzone <= 0) ? (magnitude / 127.0f) : scale;
-
-				// Two-parameter curve: blend between linear and power curve for fine sensitivity control
-				// curveStrength: 0=linear, 1=full power curve. exponent: >1=reduce sensitivity, <1=increase
-				if (curveStrength > 0.0f && scale > 0.0f) {
-					float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
-					scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				// Reconstruct the final scale by averaging the axis-specific scales
+				// weighted by each axis's contribution to the overall magnitude
+				if (magnitude > 0.0f) {
+					float weightX = absX / magnitude;
+					float weightY = absY / magnitude;
+					scale = scaleX * weightX + scaleY * weightY;
 				}
-
-				// Output scale: multiply overall output, clamp to [0,1]
-				// Use (std::min) to avoid Windows min macro conflict
-				scale = (std::min)(1.0f, scale * outputScale);
-
-				stick.X = 128 + static_cast<int>(centerX * scale);
-				stick.Y = 128 + static_cast<int>(centerY * scale);
 			}
+
+			// Two-parameter curve: blend between linear and power curve for fine sensitivity control
+			// curveStrength: 0=linear, 1=full power curve. exponent: >1=reduce sensitivity, <1=increase
+			if (curveStrength > 0.0f && scale > 0.0f) {
+				float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+				scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+			}
+
+			// Output scale: multiply overall output, clamp to [0,1]
+			// Use (std::min) to avoid Windows min macro conflict
+			scale = (std::min)(1.0f, scale * outputScale);
+
+			stick.X = 128 + static_cast<int>(centerX * scale);
+			stick.Y = 128 + static_cast<int>(centerY * scale);
 		}
 	};
-	applyDeadzoneAndCurve(settings.leftStickDeadzone, settings.leftStickCurveExponent, settings.leftStickCurveStrength, settings.leftStickOutputScale, state.LeftStick);
-	applyDeadzoneAndCurve(settings.rightStickDeadzone, settings.rightStickCurveExponent, settings.rightStickCurveStrength, settings.rightStickOutputScale, state.RightStick);
+	applyDeadzoneAndCurve(settings.leftStickDeadzone, settings.leftStickCurveExponent, settings.leftStickCurveStrength, settings.leftStickOutputScale,
+						  settings.leftStickCenterDampeningRange, settings.leftStickCenterDampeningStrength, state.LeftStick);
+	applyDeadzoneAndCurve(settings.rightStickDeadzone, settings.rightStickCurveExponent, settings.rightStickCurveStrength, settings.rightStickOutputScale,
+						  settings.rightStickCenterDampeningRange, settings.rightStickCenterDampeningStrength, state.RightStick);
 
 #pragma endregion
 
@@ -322,7 +361,7 @@ void Vigem::applyInputSettingsToScePadState(s_scePadSettings& settings, s_ScePad
 			state.RightStick.X = static_cast<int>((-adjustedY + 1.0f) * 127.5f);
 			state.RightStick.Y = static_cast<int>((-adjustedX + 1.0f) * 127.5f);
 
-			applyDeadzoneAndCurve(settings.gyroToRightStickDeadzone, 1.0f, 1.0f, 1.0f, state.RightStick);
+			applyDeadzoneAndCurve(settings.gyroToRightStickDeadzone, 1.0f, 1.0f, 1.0f, 0, 0.0f, state.RightStick);
 		}
 	}
 #pragma endregion
@@ -396,8 +435,11 @@ void Vigem::EmulatedControllerUpdate() {
 					settingsToUse.rightStickCurveStrength = m_ScePadSettings[i].rightStickCurveStrength;
 					settingsToUse.leftStickOutputScale = m_ScePadSettings[i].leftStickOutputScale;
 					settingsToUse.rightStickOutputScale = m_ScePadSettings[i].rightStickOutputScale;
+					settingsToUse.leftStickCenterDampeningRange = m_ScePadSettings[i].leftStickCenterDampeningRange;
+					settingsToUse.rightStickCenterDampeningRange = m_ScePadSettings[i].rightStickCenterDampeningRange;
+					settingsToUse.leftStickCenterDampeningStrength = m_ScePadSettings[i].leftStickCenterDampeningStrength;
+					settingsToUse.rightStickCenterDampeningStrength = m_ScePadSettings[i].rightStickCenterDampeningStrength;
 					settingsToUse.rightStickSwapAxes = m_ScePadSettings[i].rightStickSwapAxes;
-					settingsToUse.useLegacyStickCalculation = m_ScePadSettings[i].useLegacyStickCalculation;
 				}
 				applyInputSettingsToScePadState(settingsToUse, scePadState);
 

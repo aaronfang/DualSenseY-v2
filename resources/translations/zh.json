@@ -25,6 +25,12 @@
   "LeftStickOutputScale": "左摇杆输出缩放",
   "RightStickOutputScale": "右摇杆输出缩放",
   "StickOutputScaleTooltip": "缩放摇杆整体输出。1.0 = 不变。<1 = 降低，>1 = 增强（上限为最大值）。",
+  "LeftStickCenterDampeningRange": "左摇杆中心衰减范围",
+  "RightStickCenterDampeningRange": "右摇杆中心衰减范围",
+  "StickCenterDampeningRangeTooltip": "定义从中心点开始应用衰减的范围(0-127)。在此范围内，摇杆的小幅度移动会被平滑衰减，而不是像死区那样完全忽略。",
+  "LeftStickCenterDampeningStrength": "左摇杆中心衰减强度",
+  "RightStickCenterDampeningStrength": "右摇杆中心衰减强度",
+  "StickCenterDampeningStrengthTooltip": "中心衰减的强度(0-1)。0 = 无衰减，1 = 完全衰减。越高，中心区域的小幅度移动衰减越强，可有效减少摇杆抖动导致的车辆失控。",
   "LeftTrigger": "左扳机",
   "LightbarColor": "灯条颜色",
   "Position": "位置",
@@ -167,7 +173,5 @@
   "ShareButton": "分享按钮",
   "ShareButtonAsSelect": "分享按钮作为选择键",
   "TouchpadAsSelect": "触摸板作为选择键",
-  "TouchpadAsStart": "触摸板作为开始键",
-  "UseLegacyStickCalculation": "使用旧版摇杆计算方式 (v2-38)",
-  "UseLegacyStickCalculationTooltip": "启用以使用 v2-38 摇杆计算风格（直接对 delta 值应用缩放）。禁用以使用高级模式（先归一化 magnitude）。两种模式都支持曲线和输出缩放，但行为略有不同。"
+  "TouchpadAsStart": "触摸板作为开始键"
 }

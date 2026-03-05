@@ -169,8 +169,11 @@ struct s_scePadSettings {
 	float rightStickCurveStrength = 1.0f;
 	float leftStickOutputScale = 1.0f;      // Scale overall output. 1.0=no change, <1=reduce, >1=boost (clamped).
 	float rightStickOutputScale = 1.0f;
+	int leftStickCenterDampeningRange = 0;  // Center dampening range: 0-127. Defines the range from center where dampening is applied.
+	int rightStickCenterDampeningRange = 0;
+	float leftStickCenterDampeningStrength = 0.0f;  // Center dampening strength: 0.0-2.0. 0=no dampening, 1=full dampening, >1=over-dampen.
+	float rightStickCenterDampeningStrength = 0.0f;
 	bool rightStickSwapAxes = false;  // Swap right stick X/Y (left-right <-> up-down) for games like AC Rally handbrake
-	bool useLegacyStickCalculation = false;  // Use v2-38 legacy stick calculation (simple linear scaling without curve/output scale)
 
 	// Touchpad
 	bool touchpadAsMouse = false;
@@ -202,8 +205,11 @@ struct s_ScePadSettingsSimple {
 	float rightStickCurveStrength = 1.0f;
 	float leftStickOutputScale = 1.0f;
 	float rightStickOutputScale = 1.0f;
+	int leftStickCenterDampeningRange = 0;
+	int rightStickCenterDampeningRange = 0;
+	float leftStickCenterDampeningStrength = 0.0f;
+	float rightStickCenterDampeningStrength = 0.0f;
 	bool rightStickSwapAxes = false;
-	bool useLegacyStickCalculation = false;
 
 	// Motion
 	bool gyroToRightStick = false;
@@ -267,8 +273,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	rightStickCurveStrength,
 	leftStickOutputScale,
 	rightStickOutputScale,
+	leftStickCenterDampeningRange,
+	rightStickCenterDampeningRange,
+	leftStickCenterDampeningStrength,
+	rightStickCenterDampeningStrength,
 	rightStickSwapAxes,
-	useLegacyStickCalculation,
 	touchpadAsMouse,
 	touchpadAsMouse_sensitivity,
 	useMouse1Hotkey,

@@ -25,6 +25,12 @@
   "LeftStickOutputScale": "Left stick output scale",
   "RightStickOutputScale": "Right stick output scale",
   "StickOutputScaleTooltip": "Scale overall stick output. 1.0 = no change. <1 = reduce, >1 = boost (clamped to max).",
+  "LeftStickCenterDampeningRange": "Left stick center dampening range",
+  "RightStickCenterDampeningRange": "Right stick center dampening range",
+  "StickCenterDampeningRangeTooltip": "Defines the range from center (0-127) where dampening is applied. Within this range, small stick movements are smoothly dampened instead of being completely ignored like a deadzone.",
+  "LeftStickCenterDampeningStrength": "Left stick center dampening strength",
+  "RightStickCenterDampeningStrength": "Right stick center dampening strength",
+  "StickCenterDampeningStrengthTooltip": "Dampening intensity (0-1). 0 = no dampening, 1 = full dampening. Higher values reduce small center movements more, effectively reducing stick jitter that causes vehicle control issues.",
   "LeftTrigger": "Left",
   "LightbarColor": "Lightbar color",
   "Position": "Position",
@@ -170,7 +176,5 @@
   "TouchpadAsStart": "Touchpad as start",
   "CaptureDevice": "Capture device",
   "UseHotkey": "Use hotkey",
-  "GyroToMouseHotkey": "Gyro to mouse hotkey",
-  "UseLegacyStickCalculation": "Use legacy stick calculation (v2-38)",
-  "UseLegacyStickCalculationTooltip": "Enable to use v2-38 stick calculation style (applies scale directly to delta values). Disable for advanced mode (normalizes magnitude first). Both modes support curve and output scale, but behave slightly differently."
+  "GyroToMouseHotkey": "Gyro to mouse hotkey"
 }

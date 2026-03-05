@@ -1575,7 +1575,8 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 
 		// Apply deadzone, curve and output scale to a copy for preview (must match controllerEmulation logic)
 		s_ScePadData displayState = state;
-		auto applyDeadzoneAndCurve = [&scePadSettings](int deadzone, float curveExponent, float curveStrength, float outputScale, s_SceStickData& stick) {
+		auto applyDeadzoneAndCurve = [](int deadzone, float curveExponent, float curveStrength, float outputScale, 
+										 int centerDampeningRange, float centerDampeningStrength, s_SceStickData& stick) {
 			if (deadzone >= 127) {
 				stick.X = 128; stick.Y = 128;
 				return;
@@ -1583,45 +1584,83 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 			int deltaX = stick.X - 128;
 			int deltaY = stick.Y - 128;
 			float magnitude = std::sqrt(static_cast<float>(deltaX * deltaX + deltaY * deltaY));
-			if (deadzone > 0 && magnitude <= deadzone) {
+			if (magnitude <= deadzone) {
 				stick.X = 128; stick.Y = 128;
 			} else {
+				float centerX = static_cast<float>(deltaX);
+				float centerY = static_cast<float>(deltaY);
+				
 				// Calculate base scale (after deadzone removal)
-				float scale = (magnitude - deadzone) / (127.0f - deadzone);
+				float scale = (deadzone <= 0) ? (magnitude / 127.0f) : ((magnitude - deadzone) / (127.0f - deadzone));
 				if (scale > 1.0f) scale = 1.0f;
 				
-				if (scePadSettings.useLegacyStickCalculation) {
-					// Legacy v2-38 style: apply scale directly to original deltas
-					// Curve and output scale support
-					if ((curveStrength > 0.0f || curveExponent != 1.0f) && scale > 0.0f) {
-						float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
-						scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				// Independent axis center dampening: X and Y axes are dampened independently
+				float scaleX = scale;
+				float scaleY = scale;
+				
+				// Smootherstep function for smooth transitions
+				auto smootherstep = [](float t) -> float {
+					if (t <= 0.0f) return 0.0f;
+					if (t >= 1.0f) return 1.0f;
+					return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+				};
+				
+				if (centerDampeningRange > 0 && centerDampeningStrength > 0.0f) {
+					// Apply dampening independently to X axis
+					float absX = std::abs(static_cast<float>(deltaX));
+					float postDeadzoneX = std::max(0.0f, absX - deadzone);
+					if (postDeadzoneX < centerDampeningRange) {
+						float dampenFactorX = postDeadzoneX / static_cast<float>(centerDampeningRange);
+						float smoothFactorX = smootherstep(dampenFactorX);
+						
+						if (centerDampeningStrength <= 1.0f) {
+							scaleX = scale * (smoothFactorX + (1.0f - smoothFactorX) * (1.0f - centerDampeningStrength));
+						} else {
+							float exponent = 1.0f + (centerDampeningStrength - 1.0f) * 4.0f;
+							scaleX = scale * std::pow(smoothFactorX, exponent);
+						}
 					}
 					
-					// Apply output scale
-					if (outputScale != 1.0f) {
-						scale = std::min(1.0f, scale * outputScale);
+					// Apply dampening independently to Y axis
+					float absY = std::abs(static_cast<float>(deltaY));
+					float postDeadzoneY = std::max(0.0f, absY - deadzone);
+					if (postDeadzoneY < centerDampeningRange) {
+						float dampenFactorY = postDeadzoneY / static_cast<float>(centerDampeningRange);
+						float smoothFactorY = smootherstep(dampenFactorY);
+						
+						if (centerDampeningStrength <= 1.0f) {
+							scaleY = scale * (smoothFactorY + (1.0f - smoothFactorY) * (1.0f - centerDampeningStrength));
+						} else {
+							float exponent = 1.0f + (centerDampeningStrength - 1.0f) * 4.0f;
+							scaleY = scale * std::pow(smoothFactorY, exponent);
+						}
 					}
 					
-					stick.X = 128 + static_cast<int>(deltaX * scale);
-					stick.Y = 128 + static_cast<int>(deltaY * scale);
-				} else {
-					// Advanced calculation: normalize first, then apply curve and output scale
-					float centerX = static_cast<float>(deltaX);
-					float centerY = static_cast<float>(deltaY);
-					scale = (deadzone <= 0) ? (magnitude / 127.0f) : scale;
-					if (curveStrength > 0.0f && scale > 0.0f) {
-						float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
-						scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+					// Reconstruct the final scale by averaging the axis-specific scales
+					if (magnitude > 0.0f) {
+						float weightX = absX / magnitude;
+						float weightY = absY / magnitude;
+						scale = scaleX * weightX + scaleY * weightY;
 					}
-					scale = std::min(1.0f, scale * outputScale);
-					stick.X = 128 + static_cast<int>(centerX * scale);
-					stick.Y = 128 + static_cast<int>(centerY * scale);
 				}
+				
+				// Two-parameter curve: blend between linear and power curve
+				if (curveStrength > 0.0f && scale > 0.0f) {
+					float curved = (curveExponent != 1.0f) ? std::pow(scale, curveExponent) : scale;
+					scale = (1.0f - curveStrength) * scale + curveStrength * curved;
+				}
+				
+				// Output scale: multiply overall output, clamp to [0,1]
+				scale = std::min(1.0f, scale * outputScale);
+				
+				stick.X = 128 + static_cast<int>(centerX * scale);
+				stick.Y = 128 + static_cast<int>(centerY * scale);
 			}
 		};
-		applyDeadzoneAndCurve(scePadSettings.leftStickDeadzone, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale, displayState.LeftStick);
-		applyDeadzoneAndCurve(scePadSettings.rightStickDeadzone, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale, displayState.RightStick);
+		applyDeadzoneAndCurve(scePadSettings.leftStickDeadzone, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale,
+							  scePadSettings.leftStickCenterDampeningRange, scePadSettings.leftStickCenterDampeningStrength, displayState.LeftStick);
+		applyDeadzoneAndCurve(scePadSettings.rightStickDeadzone, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale,
+							  scePadSettings.rightStickCenterDampeningRange, scePadSettings.rightStickCenterDampeningStrength, displayState.RightStick);
 		if (scePadSettings.rightStickSwapAxes)
 			std::swap(displayState.RightStick.X, displayState.RightStick.Y);
 
@@ -1656,12 +1695,40 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 		drawStick(displayState.LeftStick, state.bitmask_buttons & SCE_BM_L3 ? true : false, scePadSettings.leftStickDeadzone, leftCenter, m_IsLightMode ? blackColor : whiteColor);
 		drawStick(displayState.RightStick, state.bitmask_buttons & SCE_BM_R3 ? true : false, scePadSettings.rightStickDeadzone, rightCenter, m_IsLightMode ? blackColor : whiteColor);
 
-		// Curve preview: input (0-1) vs output (0-1), gray=linear, green=left, blue=right (includes output scale)
+		// Curve preview: input (0-1) vs output (0-1), gray=linear, green=left, blue=right (includes output scale and center dampening)
 		const int curveSamples = 64;
-		auto evalCurve = [](float x, float exponent, float strength, float outputScale) -> float {
+		auto evalCurve = [](float x, float exponent, float strength, float outputScale, int centerDampeningRange, float centerDampeningStrength, int deadzone) -> float {
 			if (x <= 0.0f) return 0.0f;
-			float curved = (exponent != 1.0f) ? std::pow(x, exponent) : x;
-			float y = (1.0f - strength) * x + strength * curved;
+			
+			// Smootherstep function for smooth transitions
+			auto smootherstep = [](float t) -> float {
+				if (t <= 0.0f) return 0.0f;
+				if (t >= 1.0f) return 1.0f;
+				return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+			};
+			
+			// Apply center dampening if enabled (x is normalized 0-1, represents post-deadzone magnitude in 0-127 range)
+			float scale = x;
+			if (centerDampeningRange > 0 && centerDampeningStrength > 0.0f) {
+				// Convert x back to post-deadzone magnitude
+				float postDeadzoneMagnitude = x * (127.0f - deadzone);
+				if (postDeadzoneMagnitude < centerDampeningRange) {
+					float dampenFactor = postDeadzoneMagnitude / static_cast<float>(centerDampeningRange);
+					float smoothFactor = smootherstep(dampenFactor);
+					
+					// Use the same algorithm: linear for strength<=1, power curve for strength>1
+					if (centerDampeningStrength <= 1.0f) {
+						scale = scale * (smoothFactor + (1.0f - smoothFactor) * (1.0f - centerDampeningStrength));
+					} else {
+						float exp = 1.0f + (centerDampeningStrength - 1.0f) * 4.0f;
+						scale = scale * std::pow(smoothFactor, exp);
+					}
+				}
+			}
+			
+			// Apply curve
+			float curved = (exponent != 1.0f) ? std::pow(scale, exponent) : scale;
+			float y = (1.0f - strength) * scale + strength * curved;
 			return std::min(1.0f, y * outputScale);
 		};
 		ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1673,10 +1740,14 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 			float x0 = static_cast<float>(i) / curveSamples;
 			float x1 = static_cast<float>(i + 1) / curveSamples;
 			float y0 = x0, y1 = x1;
-			float ly0 = evalCurve(x0, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale);
-			float ly1 = evalCurve(x1, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale);
-			float ry0 = evalCurve(x0, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale);
-			float ry1 = evalCurve(x1, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale);
+			float ly0 = evalCurve(x0, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale,
+								  scePadSettings.leftStickCenterDampeningRange, scePadSettings.leftStickCenterDampeningStrength, scePadSettings.leftStickDeadzone);
+			float ly1 = evalCurve(x1, scePadSettings.leftStickCurveExponent, scePadSettings.leftStickCurveStrength, scePadSettings.leftStickOutputScale,
+								  scePadSettings.leftStickCenterDampeningRange, scePadSettings.leftStickCenterDampeningStrength, scePadSettings.leftStickDeadzone);
+			float ry0 = evalCurve(x0, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale,
+								  scePadSettings.rightStickCenterDampeningRange, scePadSettings.rightStickCenterDampeningStrength, scePadSettings.rightStickDeadzone);
+			float ry1 = evalCurve(x1, scePadSettings.rightStickCurveExponent, scePadSettings.rightStickCurveStrength, scePadSettings.rightStickOutputScale,
+								  scePadSettings.rightStickCenterDampeningRange, scePadSettings.rightStickCenterDampeningStrength, scePadSettings.rightStickDeadzone);
 			ImVec2 p0(curveMin.x + x0 * curvePreviewSize, curveMax.y - y0 * curvePreviewSize);
 			ImVec2 p1(curveMin.x + x1 * curvePreviewSize, curveMax.y - y1 * curvePreviewSize);
 			ImVec2 lp0(curveMin.x + x0 * curvePreviewSize, curveMax.y - ly0 * curvePreviewSize);
@@ -1696,10 +1767,6 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 		ImGui::TextColored(ImVec4(0.4f, 0.6f, 1, 1), "Right");
 		ImGui::EndGroup();
 
-		ImGui::Checkbox(cstr("UseLegacyStickCalculation"), &scePadSettings.useLegacyStickCalculation);
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("%s", cstr("UseLegacyStickCalculationTooltip"));
-
 		ImGui::SetNextItemWidth(400);
 		ImGui::SliderInt(cstr("LeftAnalogStickDeadZone"), &scePadSettings.leftStickDeadzone, 0, 127);
 		ImGui::SetNextItemWidth(400);
@@ -1715,6 +1782,14 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("%s", cstr("StickOutputScaleTooltip"));
 		ImGui::SetNextItemWidth(400);
+		ImGui::SliderInt(cstr("LeftStickCenterDampeningRange"), &scePadSettings.leftStickCenterDampeningRange, 0, 127);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickCenterDampeningRangeTooltip"));
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("LeftStickCenterDampeningStrength"), &scePadSettings.leftStickCenterDampeningStrength, 0.0f, 2.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("StickCenterDampeningStrengthTooltip"));
+		ImGui::SetNextItemWidth(400);
 		ImGui::SliderInt(cstr("RightAnalogStickDeadZone"), &scePadSettings.rightStickDeadzone, 0, 127);
 		ImGui::SetNextItemWidth(400);
 		ImGui::SliderFloat(cstr("RightStickCurveExponent"), &scePadSettings.rightStickCurveExponent, 0.2f, 8.0f, "%.2f");
@@ -1728,6 +1803,14 @@ bool MainWindow::TreeElement_analogSticks(s_scePadSettings &scePadSettings, s_Sc
 		ImGui::SliderFloat(cstr("RightStickOutputScale"), &scePadSettings.rightStickOutputScale, 0.1f, 1.5f, "%.2f");
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("%s", cstr("StickOutputScaleTooltip"));
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderInt(cstr("RightStickCenterDampeningRange"), &scePadSettings.rightStickCenterDampeningRange, 0, 127);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("RightStickCenterDampeningRangeTooltip"));
+		ImGui::SetNextItemWidth(400);
+		ImGui::SliderFloat(cstr("RightStickCenterDampeningStrength"), &scePadSettings.rightStickCenterDampeningStrength, 0.0f, 2.0f, "%.2f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", cstr("RightStickCenterDampeningStrengthTooltip"));
 		ImGui::Checkbox(cstr("RightStickSwapAxes"), &scePadSettings.rightStickSwapAxes);
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("%s", cstr("RightStickSwapAxesTooltip"));
